@@ -45,5 +45,7 @@ export function fromDbError(err: unknown): AppError {
     return new AppError("VALIDATION_FAILED");
   }
   if (e.code === "23505") return new AppError("STALE_VERSION");
+  // SQLSTATE only: messages can contain request data.
+  console.error("Database error", e.code ?? "unknown");
   return new AppError("INTERNAL");
 }
