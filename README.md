@@ -6,7 +6,7 @@ A solo consultant agrees fixed deliverables, a fee and a due date. Then the clie
 
 > Illustrative prototype for Galuxium Nexus V2 using fictional client data (Northlight Studio). It does not collect payments, send email, generate contracts, verify identities or create e-signatures. A reviewer's declared name is self-reported.
 
-- **Live app:** _not deployed yet — see [Deploying to Vercel](#deploying-to-vercel)_
+- **Live app:** https://scope-ledger-phi.vercel.app
 - **Demo walkthrough:** [docs/demo.md](docs/demo.md)
 - **Architecture and threat model:** [docs/architecture.md](docs/architecture.md)
 - **Acceptance results:** [docs/acceptance.md](docs/acceptance.md)

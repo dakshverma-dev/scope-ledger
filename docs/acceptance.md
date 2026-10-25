@@ -56,3 +56,19 @@ An RLS mutation check was also run: changing the `projects` policy to `using (tr
 | Signed-out end-to-end demo on the deployed URL | `docs/demo.md` checklist | Not run — not deployed |
 
 Record each result here with date, commit, command and output when run.
+
+## Live results (2026-10-25)
+
+Production deployment `https://scope-ledger-phi.vercel.app` (Vercel, commit `9324a61` code), Supabase project with both migrations applied. No Anthropic key configured, so analysis used the built-in extractor (`scope-ledger-rules-1`).
+
+`npm run test:live` against the real Supabase project: **4 passed** (visitor isolation; publishable key reaches no table or routine; 4 parallel opposite decisions over separate connections → exactly one event, others `DECISION_CONFLICT` or replay; 4 parallel publishes → one version, one live link). Anthropic live suite skipped (no key).
+
+Browser run of the full demo on production (Playwright, three separate browser contexts), **22/22 checks passed**:
+
+- signed-out landing → Try the demo → Northlight B1–B3, £1,800.00; `sl_visitor` cookie HttpOnly + Secure; `/app` `no-store`
+- analysis highlights `add two service pages` (B1) and `a second round of revisions` (B2); 90 min + 2026-11-11 previews £135.00 / £1,935.00, *Ready to publish*
+- publish v1; review link on the production origin; review page `no-store`; signed-out mobile client sees £135.00 / £1,935.00 and accepts as Demo Client
+- owner sees *Accepted*; HTML export and JSON attachment show 13500p, accepted
+- signed-out export 401; second browser gets its own project; its requests for the first browser's export and version page return 404
+- revised v2 at 120 min → £180.00 / £1,980.00; old link shows *Link expired or superseded* and its decision POST returns 404; v1 JSON export byte-identical before and after v2
+- no secret names or key prefixes in the 12 browser assets loaded by the landing page

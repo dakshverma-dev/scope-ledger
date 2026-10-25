@@ -44,3 +44,5 @@ next-env.d.ts
 # framework-generated agent notes (re-created by `next dev`)
 AGENTS.md
 CLAUDE.md
+
+.vercel

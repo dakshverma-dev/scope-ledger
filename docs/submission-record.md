@@ -6,7 +6,7 @@ Galuxium Nexus V2. Verify the deadline, rules and team roster on the live organi
 |---|---|
 | Devpost URL | _pending_ |
 | GitHub repository (public, `scope-ledger`) | _pending_ |
-| Live Vercel app | _pending_ |
+| Live Vercel app | https://scope-ledger-phi.vercel.app |
 | Demo video (2–5 min, aim 3) | _pending_ |
 | Final commit SHA | _pending_ |
 | Submission date/time | _pending_ |
