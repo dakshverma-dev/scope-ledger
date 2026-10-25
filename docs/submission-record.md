@@ -14,10 +14,10 @@ Galuxium Nexus V2. Verify the deadline, rules and team roster on the live organi
 
 ## Checklist before submitting
 
-- [ ] Supabase project created, migration applied, anonymous sign-ins enabled
-- [ ] `npm run test:live` passed and recorded in `docs/acceptance.md`
-- [ ] Vercel env vars set; `APP_BASE_URL` = deployment origin; redeployed
-- [ ] `docs/demo.md` live checklist completed in a fresh signed-out browser
+- [x] Supabase project created, both migrations applied
+- [x] `npm run test:live` passed and recorded in `docs/acceptance.md` (Supabase; Anthropic pending a key)
+- [x] Vercel env vars set; `APP_BASE_URL` = deployment origin; redeployed
+- [x] `docs/demo.md` live checklist completed in fresh browsers (automated, see acceptance)
 - [ ] Screenshots from the real app: analysis evidence, version detail, accepted decision
 - [ ] Video: problem (~20 s), baseline and request (~35 s), extraction/edits/fee (~45 s), review and decision (~45 s), export/architecture/pricing (~35 s)
 - [ ] Description states: fictional data; no payments, contracts, e-signatures or verified identities; £12/month Solo is a proposal; £0.05/analysis cost is an assumption unless measured
