@@ -60,3 +60,12 @@ export function formatTimestamp(iso: string): string {
     timeZoneName: "short",
   }).format(new Date(iso));
 }
+
+/** Parses a pounds amount typed by a person ("1,800" / "1800.5" / "90.00") into integer pence without floats. */
+export function parsePoundsToPence(input: string): number | null {
+  const s = input.trim().replace(/^£/, "").replace(/,/g, "");
+  const m = /^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(s);
+  if (!m) return null;
+  const pence = Number(m[1]) * 100 + Number((m[2] ?? "").padEnd(2, "0"));
+  return Number.isSafeInteger(pence) ? pence : null;
+}
