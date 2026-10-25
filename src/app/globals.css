@@ -273,3 +273,23 @@ blockquote.quote q { background: var(--marker); padding: 0 2px; border-radius: 2
 @media print {
   .topbar, .footer, .no-print { display: none !important; }
 }
+
+/* ---------- scroll reveal (landing) ---------- */
+.reveal {
+  transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reveal-hidden {
+  opacity: 0;
+  transform: translateY(22px);
+}
+.reveal-shown {
+  opacity: 1;
+  transform: none;
+}
+html {
+  scroll-behavior: smooth;
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .reveal-hidden { opacity: 1; transform: none; }
+}
