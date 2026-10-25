@@ -31,14 +31,14 @@ Everything is fictional. No emails, payments or signatures are involved. Use two
 
 ## Resetting the demo
 
-Each browser is one anonymous workspace, limited to one active project. To start fresh, clear the site's cookies (or use a new private window) and click **Try the demo** again. Old anonymous workspaces stay in the database.
+Each browser is one private workspace (no account), limited to one active project. To start fresh, clear the site's cookies (or use a new private window) and click **Try the demo** again. Old workspaces stay in the database.
 
 ## Live verification checklist
 
 Run on the deployed URL in a fresh browser profile, and record results in `docs/acceptance.md`.
 
 - [ ] `/` loads signed out; **Try the demo** opens the Northlight project.
-- [ ] Analysis returns two grounded items (live model); note model ID and usage from the `analysis_runs` row.
+- [ ] Analysis returns two grounded items (B1, B2) with exact quotes; note the model ID in the `analysis_runs` row.
 - [ ] Publish v1 at 90 min → £135.00 / £1,935.00; review link works in a signed-out window; Accept recorded.
 - [ ] HTML and JSON exports match; JSON downloads as a file.
 - [ ] v2 at 120 min → £180.00; old link shows the unavailable state; v1 export unchanged.

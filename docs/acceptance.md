@@ -52,7 +52,7 @@ An RLS mutation check was also run: changing the `projects` policy to `using (tr
 | Check | How to run | Status |
 |---|---|---|
 | `claude-haiku-5-5` available to the account; live Northlight extraction, model ID and token usage | `npm run test:live` with `ANTHROPIC_API_KEY` | Not run — no key in build environment |
-| Two real anonymous Supabase users isolated; parallel decisions and publishes over separate connections | `npm run test:live` with Supabase values | Not run — no project configured for this app |
+| Two real visitors isolated; publishable key reaches nothing; parallel decisions and publishes over separate connections | `npm run test:live` with Supabase values | Not run — no project configured for this app |
 | Signed-out end-to-end demo on the deployed URL | `docs/demo.md` checklist | Not run — not deployed |
 
 Record each result here with date, commit, command and output when run.

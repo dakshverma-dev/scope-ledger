@@ -15,9 +15,9 @@ A solo consultant agrees fixed deliverables, a fee and a due date. Then the clie
 
 | Area | Status |
 |---|---|
-| Anonymous workspace per browser, idempotent Northlight seed, 1 active project free cap | Implemented; DB-tested |
+| No sign-in: private workspace per browser (HttpOnly cookie secret, only its hash stored), idempotent Northlight seed, 1 active project free cap | Implemented; DB- and cookie-tested |
 | Fixed baseline (B-items, fee, rate, due date), immutable after creation | Implemented; DB triggers tested |
-| AI comparison with tool `extract_scope_changes`: literal quotes, real baseline IDs, one repair, 30 s deadline | Implemented; tested with fixture responses. **Live model call not yet verified** (no API key in the build environment) |
+| Request analysis via the `extract_scope_changes` contract: literal quotes, real baseline IDs, one repair, 30 s deadline | Implemented. Without `ANTHROPIC_API_KEY` a built-in rule-based extractor answers (recorded as model `scope-ledger-rules-1`); with a key, `MODEL_ID` is called. **Hosted model not yet verified live** |
 | 20 analyses/day and 3/minute per visitor, enforced in Postgres | Implemented; DB-tested |
 | Manual items labelled *Manually entered*, local draft that survives errors and reloads | Implemented; unit-tested |
 | Server-only fee: `Math.floor((ratePence * effortMinutes + 30) / 60)`, 15-minute effort steps | Implemented in TS and as a DB `CHECK`; tested |
@@ -31,7 +31,7 @@ A solo consultant agrees fixed deliverables, a fee and a due date. Then the clie
 
 ## Stack
 
-Next.js 16.4.3 (App Router, TypeScript, `src/`, plain CSS) · Supabase Postgres + anonymous auth + RLS · Zod 4 · Anthropic SDK 1.3.0 (server only) · Vitest 5 + PGlite (in-process Postgres) for tests. Node **22** (developed on v22.19.0, npm 11.14.0). Exact versions are pinned in `package.json` and `package-lock.json`.
+Next.js 16.4.3 (App Router, TypeScript, `src/`, plain CSS) · Supabase Postgres (owner-checked routines, RLS deny-all for API roles) · Zod 4 · Anthropic SDK 1.3.0 (server only) · Vitest 5 + PGlite (in-process Postgres) for tests. Node **22** (developed on v22.19.0, npm 11.14.0). Exact versions are pinned in `package.json` and `package-lock.json`.
 
 ## Setup
 
@@ -46,18 +46,17 @@ npm run dev                  # http://localhost:3000
 | Name | Where used | Notes |
 |---|---|---|
 | `NEXT_PUBLIC_SUPABASE_URL` | server | Project URL |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | server | Publishable/anon key. Required name per spec; no client component reads it, so it is not shipped to the browser |
-| `SUPABASE_SERVICE_ROLE_KEY` | server only | Used solely by the two token-checked review routines |
-| `ANTHROPIC_API_KEY` | server only | Without it, analysis returns *Analysis unavailable* and manual entry still works |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | live test only | Optional. The app never uses it; `test:live` uses it to show it can reach nothing |
+| `SUPABASE_SERVICE_ROLE_KEY` | server only | All database calls, always through routines that check the visitor or token hash |
+| `ANTHROPIC_API_KEY` | server only | Optional. Without it, the built-in extractor analyses requests |
 | `MODEL_ID` | server | `claude-haiku-5-5` per specification. Do not change it silently; record any change in `docs/build-log.md` |
 | `APP_BASE_URL` | server | Public origin, used for review links and same-origin checks |
 
 ### Supabase
 
-1. Create a Supabase project.
-2. **Authentication → Sign In / Providers → enable "Allow anonymous sign-ins".** (Consider enabling CAPTCHA for anonymous sign-ins on a public deployment.)
-3. Apply the migration in `supabase/migrations/` — either `supabase db push` with the Supabase CLI linked to the project, or paste `20261025000100_scope_ledger_core.sql` into the SQL editor and run it once.
-4. Put the URL, publishable key and service-role key in `.env.local`.
+1. Create a Supabase project. No auth settings are needed: the app has no sign-in.
+2. Apply both migrations in `supabase/migrations/` in order: `supabase db push` with the CLI, or paste `20261025000100_scope_ledger_core.sql` and then `20261025000200_cookie_visitors.sql` into the SQL editor and run each once.
+3. Put the URL and service-role key in `.env` or `.env.local`.
 
 ## Commands
 
@@ -66,8 +65,8 @@ npm run dev                  # http://localhost:3000
 | `npm run dev` | Development server |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm test` | 78 tests: migration/RLS/routines on PGlite, route handlers, AI validation, domain. No network |
-| `npm run test:live` | Live checks against the real Supabase project and Anthropic API from `.env` / `.env.local` (skipped when values are absent). Creates throwaway anonymous users and rows |
+| `npm test` | 84 tests: migration/RLS/routines on PGlite, route handlers, AI validation, domain. No network |
+| `npm run test:live` | Live checks against the real Supabase project and Anthropic API from `.env` / `.env.local` (skipped when values are absent). Creates throwaway visitors and rows |
 | `npm run build` | Production build |
 | `npm run check:bundle` | After a build: fails if server secret names/values or the Supabase client appear in browser assets |
 
@@ -80,10 +79,10 @@ npm run dev                  # http://localhost:3000
 
 ## Security notes and known limitations
 
-- Each browser is a separate Supabase **anonymous user**; clearing cookies loses access to that workspace.
+- There is no sign-in. Each browser gets a random workspace secret in an HttpOnly cookie (only its SHA-256 is stored); clearing cookies loses access to that workspace. All database access is server-side with the service-role key, through routines that check the visitor ID; the publishable key can reach no table or routine.
 - Review URLs are bearer capabilities. Anyone holding a live link can view that version and record the one decision. Links expire after 7 days and are revoked when a newer version is published or a new link is issued. The full link is only displayed when issued.
 - The declared reviewer name is not verified. An accepted decision is an in-product record, not a signature or a legally binding acceptance.
-- Published versions, decisions and baselines cannot be updated or deleted by any role, including the service role (triggers). As a consequence, deleting an anonymous user in Supabase fails once they have published; this demo has no account deletion.
+- Published versions, decisions and baselines cannot be updated or deleted by any role, including the service role (triggers). This demo has no workspace deletion.
 - The PGlite test database runs one connection, so "simultaneous" tests interleave but do not run in parallel. True parallel locking is covered by `tests/live/supabase.live.test.ts`, which must be run against the real project.
 - Analysis rate limits use a rolling 1-minute and 24-hour window.
 

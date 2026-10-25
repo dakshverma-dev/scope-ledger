@@ -47,3 +47,9 @@ All on 2026-10-25.
 ## Existing vs new work
 
 All application code, SQL, tests and documents in this repository were written for this entry. Third-party material is limited to the npm packages listed above and Google Fonts served through `next/font` (SIL OFL). No assets or code were reused from other hackathon submissions.
+
+## Change: no sign-in, built-in request analysis (2026-10-25, commit `7226902`)
+
+- Supabase anonymous sign-in was removed at the product owner's request (no auth setup or sign-in step). Workspaces are now keyed by a random 32-byte secret in an HttpOnly cookie; only its SHA-256 is stored (`visitors` table, migration `20261025000200_cookie_visitors.sql`). All owner reads and writes moved into service-role-only routines that take and check the visitor ID; RLS stays enabled with no policies so the publishable key reaches nothing. `@supabase/ssr` and `src/proxy.ts` were removed.
+- Request analysis now defaults to a built-in rule-based extractor (`src/lib/ai/rules-model.ts`, model ID `scope-ledger-rules-1`) when `ANTHROPIC_API_KEY` is empty; the hosted-model path is unchanged and is used when a key is set. Suggested items are labelled "Suggested from request".
+- Tests now run the production repository through a PGlite RPC adapter (the duplicated test adapter was deleted). Added cookie-session tests and rules-extractor tests. Mutation check: removing the visitor filter from `owner_get_project` fails two isolation tests. Result: 84 passed, 6 skipped (live), lint/typecheck/build/bundle scan clean.
