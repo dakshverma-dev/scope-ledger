@@ -30,9 +30,9 @@ All on 2026-10-25.
 | L1 | `f57baea` | Schema, RLS, immutability triggers, publish/decision/rate-limit routines | 20 DB tests pass; RLS mutation check fails as expected when weakened |
 | L2 | `6baf777` | Server-side Supabase session + anonymous sign-in, service-role review adapter, repository, error contract, origin check | 26 pass |
 | L3 | `196ad0c` | Landing, workspace, project, change editor (local draft, manual items, fee preview), version page, pricing | 49 pass; production build OK |
-| L4 | `3ae5fbd` | `extract_scope_changes` adapter, evidence validation, one repair, 30 s deadline, DB rate limits, `/analyse` | 61 pass |
-| L5 | `01425e9` | `/publish` with idempotent key, server fee, atomic link rotation | 67 pass |
-| L6 | `5145bc1` | Review page, bearer snapshot and decision routes | 74 pass |
+| L4 | `3ae5fbd` | `extract_scope_changes` adapter, evidence validation, one repair, 30 s deadline, DB rate limits, `/analyse` | new `ai` suite 12 pass (full suite not re-run at this commit) |
+| L5 | `01425e9` | `/publish` with idempotent key, server fee, atomic link rotation | new `api.publish` suite 6 pass (full suite not re-run) |
+| L6 | `5145bc1` | Review page, bearer snapshot and decision routes | new `api.review` suite 7 pass (full suite not re-run) |
 | L7 | `40719a9` | Export (HTML/JSON), journey tests, live checks, bundle scan, docs | 78 pass; clean `npm ci`, lint, typecheck, build, bundle scan OK |
 
 ## Compatibility notes
