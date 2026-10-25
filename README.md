@@ -67,7 +67,7 @@ npm run dev                  # http://localhost:3000
 | `npm run lint` | ESLint |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | 78 tests: migration/RLS/routines on PGlite, route handlers, AI validation, domain. No network |
-| `npm run test:live` | Live checks against the real Supabase project and Anthropic API from `.env.local` (skipped when values are absent). Creates throwaway anonymous users and rows |
+| `npm run test:live` | Live checks against the real Supabase project and Anthropic API from `.env` / `.env.local` (skipped when values are absent). Creates throwaway anonymous users and rows |
 | `npm run build` | Production build |
 | `npm run check:bundle` | After a build: fails if server secret names/values or the Supabase client appear in browser assets |
 

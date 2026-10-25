@@ -27,80 +27,94 @@ beforeEach(async () => {
   db = await createTestDb();
 });
 
-async function seed(uid: string): Promise<string> {
-  const [row] = await db.asUser<{ id: string }>(uid, "select public.seed_demo_project() as id");
-  return row.id;
-}
+type Row = Record<string, unknown>;
+const one = async (sql: string, params: unknown[]) => (await db.asService<{ v: unknown }>(sql, params))[0].v;
+
+const seed = async (visitor: string) => String(await one("select public.seed_demo_project($1) as v", [visitor]));
+const getProject = (visitor: string, id: string) => one("select public.owner_get_project($1, $2) as v", [visitor, id]) as Promise<Row | null>;
+const listVersions = (visitor: string, id: string) => one("select public.owner_list_versions($1, $2) as v", [visitor, id]) as Promise<Row[]>;
+const listDecisions = (visitor: string, id: string) => one("select public.owner_list_decisions($1, $2) as v", [visitor, id]) as Promise<Row[]>;
 
 async function publish(
-  uid: string,
+  visitor: string,
   projectId: string,
   opts: { key?: string; expected?: string | null; effort?: number; due?: string; items?: unknown; token?: string } = {},
 ) {
   const token = opts.token ?? randomUUID();
-  const [row] = await db.asUser<{ r: Record<string, unknown> }>(
-    uid,
-    "select public.publish_change_version($1, $2, $3, $4, $5::jsonb, $6, $7::date, $8) as r",
-    [
-      projectId,
-      opts.key ?? randomUUID(),
-      opts.expected ?? null,
-      NORTHLIGHT_REQUEST,
-      JSON.stringify(opts.items ?? ITEMS),
-      opts.effort ?? 90,
-      opts.due ?? "2026-11-11",
-      await sha256Hex(token),
-    ],
-  );
-  return { ...(row.r as { versionId: string; versionNumber: number; extraFeePence: number; revisedTotalPence: number; created: boolean }), token };
+  const r = (await one("select public.publish_change_version($1, $2, $3, $4, $5, $6::jsonb, $7, $8::date, $9) as v", [
+    visitor,
+    projectId,
+    opts.key ?? randomUUID(),
+    opts.expected ?? null,
+    NORTHLIGHT_REQUEST,
+    JSON.stringify(opts.items ?? ITEMS),
+    opts.effort ?? 90,
+    opts.due ?? "2026-11-11",
+    await sha256Hex(token),
+  ])) as { versionId: string; versionNumber: number; extraFeePence: number; revisedTotalPence: number; created: boolean };
+  return { ...r, token };
 }
 
 const snapshot = async (token: string) =>
-  (await db.asService<{ s: Record<string, unknown> | null }>("select public.get_review_snapshot($1) as s", [await sha256Hex(token)]))[0].s;
+  (await one("select public.get_review_snapshot($1) as v", [await sha256Hex(token)])) as Row | null;
 
 const decide = async (token: string, decision: string, name = "Demo Client", note: string | null = null) =>
-  (
-    await db.asService<{ r: Record<string, unknown> }>("select public.record_review_decision($1, $2, $3, $4) as r", [
-      await sha256Hex(token),
-      decision,
-      name,
-      note,
-    ])
-  )[0].r;
+  (await one("select public.record_review_decision($1, $2, $3, $4) as v", [await sha256Hex(token), decision, name, note])) as Row;
+
+describe("visitor identity", () => {
+  it("resolves a cookie secret hash to one stable visitor", async () => {
+    const hash = await sha256Hex("cookie-secret");
+    expect(await one("select public.resolve_visitor($1, false) as v", [hash])).toBeNull();
+    const id = await one("select public.resolve_visitor($1, true) as v", [hash]);
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await one("select public.resolve_visitor($1, true) as v", [hash])).toBe(id);
+    expect(await one("select public.resolve_visitor($1, false) as v", [hash])).toBe(id);
+    expect(await one("select public.resolve_visitor($1, true) as v", ["not-a-hash"])).toBeNull();
+    expect(JSON.stringify(await db.admin("select * from public.visitors"))).not.toContain("cookie-secret");
+  });
+
+  it("rejects unknown or missing visitors", async () => {
+    await expect(seed(randomUUID())).rejects.toThrow(/UNAUTHENTICATED/);
+    await expect(db.asService("select public.seed_demo_project(null)")).rejects.toThrow(/UNAUTHENTICATED/);
+  });
+});
 
 describe("projects, demo seed and free allowance", () => {
   it("seeds Northlight idempotently per visitor with the exact fixture", async () => {
     const a = await db.newVisitor();
     const first = await seed(a);
     expect(await seed(a)).toBe(first);
-    const [p] = await db.asUser<Record<string, unknown>>(a, "select * from public.projects");
+    const p = await getProject(a, first);
     expect(p).toMatchObject({
       name: "Northlight website refresh",
       client_name: "Northlight Studio",
       original_fee_pence: 180000,
       rate_pence: 9000,
+      due_on: "2026-11-09",
       current_version_id: null,
     });
-    expect(p.baseline_items).toEqual([
+    expect(p!.baseline_items).toEqual([
       { id: "B1", text: "Design and implement a three page responsive website" },
       { id: "B2", text: "Include one round of revisions" },
       { id: "B3", text: "Deliver the agreed pages by 2026-11-09" },
     ]);
+    expect(p).not.toHaveProperty("user_id");
   });
 
-  it("gives each anonymous visitor an isolated copy of the demo", async () => {
+  it("gives each visitor an isolated copy of the demo", async () => {
     const a = await db.newVisitor();
     const b = await db.newVisitor();
     expect(await seed(a)).not.toBe(await seed(b));
-    expect(await db.asUser(a, "select id from public.projects")).toHaveLength(1);
-    expect(await db.asUser(b, "select id from public.projects")).toHaveLength(1);
+    expect(await one("select public.owner_list_projects($1) as v", [a])).toHaveLength(1);
+    expect(await one("select public.owner_list_projects($1) as v", [b])).toHaveLength(1);
   });
 
   it("enforces one active project on the free allowance", async () => {
     const a = await db.newVisitor();
     await seed(a);
     await expect(
-      db.asUser(a, "select public.create_project('Second', 'Client', $1::jsonb, 100, 100, '2026-12-01')", [
+      db.asService("select public.create_project($1, 'Second', 'Client', $2::jsonb, 100, 100, '2026-12-01')", [
+        a,
         JSON.stringify([{ id: "B1", text: "Thing" }]),
       ]),
     ).rejects.toThrow(/FREE_LIMIT_REACHED/);
@@ -109,7 +123,8 @@ describe("projects, demo seed and free allowance", () => {
   it("validates baseline shape and money ranges in the database", async () => {
     const a = await db.newVisitor();
     const create = (items: unknown, fee = 100, rate = 100, name = "P") =>
-      db.asUser(a, "select public.create_project($1, 'Client', $2::jsonb, $3, $4, '2026-12-01')", [
+      db.asService("select public.create_project($1, $2, 'Client', $3::jsonb, $4, $5, '2026-12-01')", [
+        a,
         name,
         JSON.stringify(items),
         fee,
@@ -126,21 +141,15 @@ describe("projects, demo seed and free allowance", () => {
     await expect(create([{ id: "B1", text: "a" }], 100, 0)).rejects.toThrow(/check constraint/);
     await expect(create([{ id: "B1", text: "a" }], 100, 100001)).rejects.toThrow(/check constraint/);
     await expect(create([{ id: "B1", text: "a" }], 100, 100, "x".repeat(101))).rejects.toThrow(/check constraint/);
-    const [ok] = await db.asUser<{ id: string }>(
-      a,
-      "select public.create_project('P', 'C', $1::jsonb, 0, 1, '2026-12-01') as id",
-      [JSON.stringify([{ id: "B1", text: "a" }])],
+    const [ok] = await db.asService<{ id: string }>(
+      "select public.create_project($1, 'P', 'C', $2::jsonb, 0, 1, '2026-12-01') as id",
+      [a, JSON.stringify([{ id: "B1", text: "a" }])],
     );
     expect(ok.id).toMatch(/^[0-9a-f-]{36}$/);
   });
-
-  it("requires an authenticated identity", async () => {
-    await expect(db.run("authenticated", null, "select public.seed_demo_project()")).rejects.toThrow(/UNAUTHENTICATED/);
-    await expect(db.run("anon", null, "select public.seed_demo_project()")).rejects.toThrow(/permission denied/);
-  });
 });
 
-describe("row-level security and grants", () => {
+describe("ownership and privileges", () => {
   it("visitor B can neither read nor act on visitor A's records", async () => {
     const a = await db.newVisitor();
     const b = await db.newVisitor();
@@ -148,49 +157,56 @@ describe("row-level security and grants", () => {
     await seed(b);
     const v1 = await publish(a, projectA);
     await decide(v1.token, "accepted");
-    await db.asUser(a, "select public.begin_analysis_run($1, $2)", [projectA, await sha256Hex("x")]);
+    await db.asService("select public.begin_analysis_run($1, $2, $3)", [a, projectA, await sha256Hex("x")]);
 
-    for (const table of ["projects", "change_versions", "decision_events", "analysis_runs"]) {
-      const rows = await db.asUser<{ id: string }>(b, `select id from public.${table}`);
-      expect(rows.some((r) => r.id === projectA || r.id === v1.versionId), table).toBe(false);
-    }
-    expect(await db.asUser(b, "select * from public.change_versions")).toHaveLength(0);
-    expect(await db.asUser(b, "select * from public.decision_events")).toHaveLength(0);
-    expect(await db.asUser(b, "select * from public.analysis_runs")).toHaveLength(0);
-    expect(await db.asUser(b, "select id from public.review_tokens")).toHaveLength(0);
-    expect(await db.asUser(b, "select * from public.projects where id = $1", [projectA])).toHaveLength(0);
-
+    expect(await getProject(b, projectA)).toBeNull();
+    expect(await listVersions(b, projectA)).toEqual([]);
+    expect(await listDecisions(b, projectA)).toEqual([]);
+    expect(await one("select public.owner_get_version($1, $2) as v", [b, v1.versionId])).toBeNull();
+    expect(await one("select public.owner_get_active_link($1, $2) as v", [b, projectA])).toBeNull();
+    expect(JSON.stringify(await one("select public.owner_list_projects($1) as v", [b]))).not.toContain(projectA);
     await expect(publish(b, projectA)).rejects.toThrow(/NOT_FOUND/);
     await expect(
-      db.asUser(b, "select public.begin_analysis_run($1, $2)", [projectA, await sha256Hex("x")]),
+      db.asService("select public.begin_analysis_run($1, $2, $3)", [b, projectA, await sha256Hex("x")]),
+    ).rejects.toThrow(/NOT_FOUND/);
+    const run = (await db.admin<{ id: string }>("select id from public.analysis_runs"))[0].id;
+    await expect(
+      db.asService("select public.complete_analysis_run($1, $2, 'success', null, 'm', null, null, 1)", [b, run]),
     ).rejects.toThrow(/NOT_FOUND/);
 
     // Owner still sees their own data.
-    expect(await db.asUser(a, "select id from public.change_versions")).toHaveLength(1);
-    expect(await db.asUser(a, "select id from public.decision_events")).toHaveLength(1);
+    expect(await listVersions(a, projectA)).toHaveLength(1);
+    expect(await listDecisions(a, projectA)).toHaveLength(1);
   });
 
-  it("denies direct writes, hash reads and anon reads by default", async () => {
+  it("API roles (anon, authenticated) can reach no table and no routine", async () => {
     const a = await db.newVisitor();
     const projectA = await seed(a);
-    await publish(a, projectA);
-    await expect(db.asUser(a, "update public.projects set name = 'x'")).rejects.toThrow(/permission denied/);
-    await expect(db.asUser(a, "delete from public.change_versions")).rejects.toThrow(/permission denied/);
-    await expect(
-      db.asUser(a, "insert into public.decision_events (change_version_id, review_token_id, decision, declared_name) values (gen_random_uuid(), gen_random_uuid(), 'accepted', 'x')"),
-    ).rejects.toThrow(/permission denied/);
-    await expect(db.asUser(a, "select token_hash from public.review_tokens")).rejects.toThrow(/permission denied/);
-    expect(await db.asUser(a, "select id, expires_at from public.review_tokens")).toHaveLength(1);
-    await expect(db.run("anon", null, "select * from public.projects")).rejects.toThrow(/permission denied/);
+    const v1 = await publish(a, projectA);
+    for (const role of ["anon", "authenticated"] as const) {
+      for (const table of ["visitors", "projects", "change_versions", "review_tokens", "decision_events", "analysis_runs"]) {
+        await expect(db.run(role, a, `select * from public.${table}`), `${role} ${table}`).rejects.toThrow(/permission denied/);
+      }
+      for (const call of [
+        "select public.resolve_visitor(repeat('0', 64), true)",
+        `select public.owner_list_projects('${a}')`,
+        `select public.owner_get_project('${a}', '${projectA}')`,
+        `select public.seed_demo_project('${a}')`,
+        `select public.get_review_snapshot('${await sha256Hex(v1.token)}')`,
+        `select public.record_review_decision('${await sha256Hex(v1.token)}', 'accepted', 'x', null)`,
+      ]) {
+        await expect(db.run(role, a, call), `${role} ${call}`).rejects.toThrow(/permission denied/);
+      }
+    }
   });
 
-  it("restricts review routines to the service role", async () => {
+  it("never returns the review token hash to the owner", async () => {
     const a = await db.newVisitor();
-    await expect(db.asUser(a, "select public.get_review_snapshot($1)", ["0".repeat(64)])).rejects.toThrow(/permission denied/);
-    await expect(
-      db.asUser(a, "select public.record_review_decision($1, 'accepted', 'x', null)", ["0".repeat(64)]),
-    ).rejects.toThrow(/permission denied/);
-    await expect(db.run("anon", null, "select public.get_review_snapshot($1)", ["0".repeat(64)])).rejects.toThrow(/permission denied/);
+    const projectA = await seed(a);
+    const v1 = await publish(a, projectA);
+    const link = await one("select public.owner_get_active_link($1, $2) as v", [a, projectA]);
+    expect(Object.keys(link as Row).sort()).toEqual(["change_version_id", "created_at", "expires_at"]);
+    expect(JSON.stringify(link)).not.toContain(await sha256Hex(v1.token));
   });
 });
 
@@ -200,9 +216,8 @@ describe("publication", () => {
     const projectId = await seed(a);
     const v1 = await publish(a, projectId);
     expect(v1).toMatchObject({ versionNumber: 1, extraFeePence: 13500, revisedTotalPence: 193500, created: true });
-    const [p] = await db.asUser<{ current_version_id: string }>(a, "select current_version_id from public.projects");
-    expect(p.current_version_id).toBe(v1.versionId);
-    const [v] = await db.asUser<Record<string, unknown>>(a, "select * from public.change_versions");
+    expect((await getProject(a, projectId))!.current_version_id).toBe(v1.versionId);
+    const [v] = await listVersions(a, projectId);
     expect(v.baseline_snapshot).toEqual({
       projectName: "Northlight website refresh",
       clientName: "Northlight Studio",
@@ -226,27 +241,25 @@ describe("publication", () => {
     const retry = await publish(a, projectId, { key, effort: 2400, due: "2027-01-01" });
     expect(retry.versionId).toBe(first.versionId);
     expect(retry).toMatchObject({ versionNumber: 1, created: false, extraFeePence: 13500 });
-    expect(await db.asUser(a, "select id from public.change_versions")).toHaveLength(1);
+    expect(await listVersions(a, projectId)).toHaveLength(1);
     expect(await snapshot(first.token)).toBeNull();
     expect(await snapshot(retry.token)).not.toBeNull();
-    const tokens = await db.asUser<{ revoked_at: string | null }>(a, "select revoked_at from public.review_tokens");
+    const tokens = await db.admin<{ revoked_at: string | null }>("select revoked_at from public.review_tokens");
     expect(tokens.filter((t) => t.revoked_at === null)).toHaveLength(1);
   });
 
-  it("serialises parallel publishes without duplicate numbers", async () => {
+  it("serialises interleaved publishes without duplicate numbers", async () => {
     const a = await db.newVisitor();
     const projectId = await seed(a);
     const key = randomUUID();
     const results = await Promise.allSettled([
       publish(a, projectId, { key }),
       publish(a, projectId, { key }),
-      publish(a, projectId, { key: randomUUID() }), // stale: expected null but v1 exists by then
+      publish(a, projectId, { key: randomUUID() }),
     ]);
-    const fulfilled = results.filter((r) => r.status === "fulfilled");
-    expect(fulfilled).toHaveLength(2);
-    expect(results[2]).toMatchObject({ status: "rejected" });
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(2);
     expect(String((results[2] as PromiseRejectedResult).reason)).toMatch(/STALE_VERSION/);
-    expect(await db.asUser(a, "select id from public.change_versions")).toHaveLength(1);
+    expect(await listVersions(a, projectId)).toHaveLength(1);
   });
 
   it("rejects stale expectations, invalid effort, dates and items", async () => {
@@ -257,18 +270,12 @@ describe("publication", () => {
     }
     await expect(publish(a, projectId, { due: "2026-11-08" })).rejects.toThrow(/INVALID_DUE_DATE/);
     await expect(publish(a, projectId, { items: [] })).rejects.toThrow(/INVALID_APPROVED_ITEMS/);
-    await expect(
-      publish(a, projectId, { items: [{ ...ITEMS[0], baselineItemIds: ["B9"] }] }),
-    ).rejects.toThrow(/INVALID_APPROVED_ITEMS/);
+    await expect(publish(a, projectId, { items: [{ ...ITEMS[0], baselineItemIds: ["B9"] }] })).rejects.toThrow(/INVALID_APPROVED_ITEMS/);
     await expect(
       publish(a, projectId, { items: Array.from({ length: 11 }, (_, i) => ({ ...ITEMS[0], id: `c${i}` })) }),
     ).rejects.toThrow(/INVALID_APPROVED_ITEMS/);
-    await expect(
-      publish(a, projectId, { items: [{ ...ITEMS[0], origin: "manually_entered" }] }),
-    ).rejects.toThrow(/INVALID_APPROVED_ITEMS/);
-    await expect(publish(a, projectId, { items: [{ ...ITEMS[0], extraFeePence: 1 }] })).rejects.toThrow(
-      /INVALID_APPROVED_ITEMS/,
-    );
+    await expect(publish(a, projectId, { items: [{ ...ITEMS[0], origin: "manually_entered" }] })).rejects.toThrow(/INVALID_APPROVED_ITEMS/);
+    await expect(publish(a, projectId, { items: [{ ...ITEMS[0], extraFeePence: 1 }] })).rejects.toThrow(/INVALID_APPROVED_ITEMS/);
     const k1 = randomUUID();
     const v1 = await publish(a, projectId, { key: k1 });
     await expect(publish(a, projectId, { expected: null })).rejects.toThrow(/STALE_VERSION/);
@@ -283,8 +290,10 @@ describe("publication", () => {
     const projectId = await seed(a);
     const v1 = await publish(a, projectId);
     await decide(v1.token, "accepted");
-    await expect(db.admin("update public.change_versions set effort_minutes = 15")).rejects.toThrow(/IMMUTABLE_RECORD/);
-    await expect(db.admin("delete from public.change_versions")).rejects.toThrow(/IMMUTABLE_RECORD/);
+    for (const sql of ["update public.change_versions set effort_minutes = 15", "delete from public.change_versions"]) {
+      await expect(db.admin(sql)).rejects.toThrow(/IMMUTABLE_RECORD/);
+      await expect(db.asService(sql)).rejects.toThrow(/IMMUTABLE_RECORD/);
+    }
     await expect(db.admin("update public.decision_events set decision = 'revision_requested'")).rejects.toThrow(/IMMUTABLE_RECORD/);
     await expect(db.admin("delete from public.decision_events")).rejects.toThrow(/IMMUTABLE_RECORD/);
     await expect(db.admin("update public.projects set rate_pence = 1")).rejects.toThrow(/BASELINE_IMMUTABLE/);
@@ -319,24 +328,25 @@ describe("client review and decisions", () => {
 
   it("records one terminal decision; replay is idempotent; opposite conflicts", async () => {
     const a = await db.newVisitor();
-    const v1 = await publish(a, await seed(a));
+    const projectId = await seed(a);
+    const v1 = await publish(a, projectId);
     expect(await decide(v1.token, "accepted")).toMatchObject({ status: "created", decision: "accepted", declaredName: "Demo Client" });
     expect(await decide(v1.token, "accepted", "  Demo Client ")).toMatchObject({ status: "replayed" });
     await expect(decide(v1.token, "revision_requested")).rejects.toThrow(/DECISION_CONFLICT/);
     await expect(decide(v1.token, "accepted", "Someone else")).rejects.toThrow(/DECISION_CONFLICT/);
-    expect(await db.asUser(a, "select id from public.decision_events")).toHaveLength(1);
+    expect(await listDecisions(a, projectId)).toHaveLength(1);
     expect((await snapshot(v1.token))!.decision).toMatchObject({ decision: "accepted", declaredName: "Demo Client" });
   });
 
-  it("simultaneous opposite decisions yield exactly one event and one conflict", async () => {
+  it("interleaved opposite decisions yield exactly one event and one conflict", async () => {
     const a = await db.newVisitor();
-    const v1 = await publish(a, await seed(a));
+    const projectId = await seed(a);
+    const v1 = await publish(a, projectId);
     const results = await Promise.allSettled([decide(v1.token, "accepted"), decide(v1.token, "revision_requested")]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
-    expect(rejected).toHaveLength(1);
     expect(String(rejected[0].reason)).toMatch(/DECISION_CONFLICT/);
-    expect(await db.asUser(a, "select id from public.decision_events")).toHaveLength(1);
+    expect(await listDecisions(a, projectId)).toHaveLength(1);
   });
 
   it("validates reviewer input", async () => {
@@ -359,17 +369,14 @@ describe("client review and decisions", () => {
     await expect(decide(v1.token, "accepted")).rejects.toThrow(/UNAVAILABLE/);
     expect(await snapshot("never-issued")).toBeNull();
     await expect(decide("never-issued", "accepted")).rejects.toThrow(/UNAVAILABLE/);
-    expect(await db.asService<{ s: unknown }>("select public.get_review_snapshot('not-a-hash') as s")).toEqual([{ s: null }]);
+    expect(await one("select public.get_review_snapshot('not-a-hash') as v", [])).toBeNull();
 
-    // Version 2 link works; version 1's accepted record is untouched.
     expect(await snapshot(v2.token)).toMatchObject({ versionNumber: 2, extraFeePence: 18000, decision: null });
-    const [old] = await db.asUser<Record<string, unknown>>(
-      a,
+    const [old] = await db.admin<Row>(
       "select v.extra_fee_pence, v.revised_total_pence, d.decision from public.change_versions v join public.decision_events d on d.change_version_id = v.id where v.version_number = 1",
     );
     expect(old).toEqual({ extra_fee_pence: 13500, revised_total_pence: 193500, decision: "accepted" });
 
-    // Expire v2's link (test setup bypasses the revoke-only trigger).
     await db.admin("alter table public.review_tokens disable trigger review_tokens_revoke_only");
     await db.admin(
       "update public.review_tokens set created_at = now() - interval '8 days', expires_at = now() - interval '1 day' where revoked_at is null",
@@ -385,7 +392,7 @@ describe("analysis rate limiting", () => {
     const a = await db.newVisitor();
     const projectId = await seed(a);
     const hash = await sha256Hex(NORTHLIGHT_REQUEST);
-    const begin = () => db.asUser<{ id: string }>(a, "select public.begin_analysis_run($1, $2) as id", [projectId, hash]);
+    const begin = () => db.asService("select public.begin_analysis_run($1, $2, $3)", [a, projectId, hash]);
     for (let i = 0; i < 3; i++) await begin();
     await expect(begin()).rejects.toThrow(/RATE_LIMITED_MINUTE/);
 
@@ -400,24 +407,27 @@ describe("analysis rate limiting", () => {
     await db.admin("alter table public.analysis_runs enable trigger analysis_runs_complete_once");
     await expect(begin()).rejects.toThrow(/RATE_LIMITED_DAY/);
 
-    // Another visitor has their own allowance.
     const b = await db.newVisitor();
     const projectB = await seed(b);
-    await db.asUser(b, "select public.begin_analysis_run($1, $2)", [projectB, hash]);
+    await db.asService("select public.begin_analysis_run($1, $2, $3)", [b, projectB, hash]);
   });
 
   it("completes a run exactly once and records usage", async () => {
     const a = await db.newVisitor();
     const projectId = await seed(a);
-    const [{ id }] = await db.asUser<{ id: string }>(a, "select public.begin_analysis_run($1, $2) as id", [
+    const [{ id }] = await db.asService<{ id: string }>("select public.begin_analysis_run($1, $2, $3) as id", [
+      a,
       projectId,
       await sha256Hex("r"),
     ]);
     const complete = () =>
-      db.asUser(a, "select public.complete_analysis_run($1, 'success', '{\"items\":[]}'::jsonb, 'm', '{\"input_tokens\":1}'::jsonb, null, 1)", [id]);
+      db.asService(
+        "select public.complete_analysis_run($1, $2, 'success', '{\"items\":[]}'::jsonb, 'm', '{\"input_tokens\":1}'::jsonb, null, 1)",
+        [a, id],
+      );
     await complete();
     await expect(complete()).rejects.toThrow(/NOT_FOUND/);
-    const [run] = await db.asUser<Record<string, unknown>>(a, "select status, model_id, token_usage from public.analysis_runs");
+    const [run] = await db.admin<Row>("select status, model_id, token_usage from public.analysis_runs");
     expect(run).toEqual({ status: "success", model_id: "m", token_usage: { input_tokens: 1 } });
   });
 });

@@ -33,8 +33,8 @@ export interface CompleteRunArgs {
 }
 
 /**
- * Data access for one signed-in visitor. Every implementation runs as that
- * visitor (RLS applies) and uses the transactional routines for all writes.
+ * Data access for one visitor workspace. Every call goes through a routine
+ * that checks the visitor ID; writes are single transactional routines.
  */
 export interface OwnerRepository {
   readonly userId: string;
@@ -44,14 +44,15 @@ export interface OwnerRepository {
   getProject(id: string): Promise<Project | null>;
   listVersions(projectId: string): Promise<ChangeVersion[]>;
   getVersion(id: string): Promise<ChangeVersion | null>;
-  listDecisions(versionIds: string[]): Promise<DecisionEvent[]>;
+  /** Decisions for all versions of one of this visitor's projects. */
+  listDecisions(projectId: string): Promise<DecisionEvent[]>;
   getActiveLink(projectId: string): Promise<ReviewLinkInfo | null>;
   publish(args: PublishArgs): Promise<PublishResult>;
   beginAnalysisRun(projectId: string, requestHash: string): Promise<string>;
   completeAnalysisRun(args: CompleteRunArgs): Promise<void>;
 }
 
-/** Bearer-token access. Only server code holding the service-role key implements this. */
+/** Bearer-token access through the two token-checked routines. */
 export interface ReviewRepository {
   getSnapshot(tokenHash: string): Promise<ReviewSnapshot | null>;
   recordDecision(args: {

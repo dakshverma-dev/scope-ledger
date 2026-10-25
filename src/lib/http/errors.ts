@@ -32,7 +32,7 @@ const STATUS: Record<ErrorCode, number> = {
 };
 
 const DEFAULT_MESSAGE: Record<ErrorCode, string> = {
-  UNAUTHENTICATED: "Start the demo to create a workspace session.",
+  UNAUTHENTICATED: "Start the demo to open a workspace in this browser.",
   NOT_FOUND: "That record is not available in your workspace.",
   FORBIDDEN_ORIGIN: "Request origin not allowed.",
   VALIDATION_FAILED: "Some fields are invalid.",

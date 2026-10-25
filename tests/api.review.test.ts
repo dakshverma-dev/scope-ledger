@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestDb, type TestDb } from "./helpers/db";
+import { createTestDb, pgliteRpc, type TestDb } from "./helpers/db";
 import { NORTHLIGHT_PUBLISH } from "./helpers/fixtures";
-import { pgliteOwnerRepository, pgliteReviewRepository } from "./helpers/pglite-repo";
+import { ownerRepository, reviewRepository } from "@/lib/db/rpc-repository";
 import { current, get, ORIGIN, params, post } from "./helpers/routes";
 
 vi.mock("@/lib/auth/session", async () => {
@@ -11,7 +11,7 @@ vi.mock("@/lib/auth/session", async () => {
     if (!current.owner) throw new AppError("UNAUTHENTICATED");
     return current.owner;
   };
-  return { requireOwnerRepository: need, ensureAnonymousVisitor: need, getOwnerRepository: async () => current.owner };
+  return { requireOwnerRepository: need, ensureVisitor: need, getOwnerRepository: async () => current.owner };
 });
 vi.mock("@/lib/db/admin", async () => {
   const { current } = await import("./helpers/routes");
@@ -28,8 +28,8 @@ let projectId: string;
 beforeEach(async () => {
   process.env.APP_BASE_URL = ORIGIN;
   db = await createTestDb();
-  current.owner = pgliteOwnerRepository(db, await db.newVisitor());
-  current.review = pgliteReviewRepository(db);
+  current.owner = ownerRepository(pgliteRpc(db), await db.newVisitor());
+  current.review = reviewRepository(pgliteRpc(db));
   projectId = await startDemo(current.owner);
 });
 

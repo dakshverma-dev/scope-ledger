@@ -1,4 +1,5 @@
 import { extractScopeChanges, type CreateMessage, type FailureCode } from "@/lib/ai/extract";
+import { RULES_MODEL_ID, rulesCreateMessage } from "@/lib/ai/rules-model";
 import type { ExtractedItem } from "@/lib/ai/schema";
 import type { OwnerRepository } from "@/lib/db/repository";
 import { sha256Hex } from "@/lib/domain/tokens";
@@ -23,8 +24,9 @@ const FAILURE_MESSAGE: Record<FailureCode, string> = {
 
 /**
  * Owner check → shared DB rate limit (also records the attempt) → bounded model
- * call → run completion with real model ID and usage. Only validated items are
- * returned or stored; failures are recorded and surface as 503.
+ * call → run completion with the model ID and usage actually reported. Only
+ * validated items are returned or stored; failures are recorded and surface as
+ * 503. Without a hosted model configured, the built-in rules extractor answers.
  */
 export async function analyseRequest(
   repo: OwnerRepository,
@@ -35,17 +37,17 @@ export async function analyseRequest(
   if (!uuidSchema.safeParse(projectId).success) throw new AppError("NOT_FOUND");
   const project = await repo.getProject(projectId);
   if (!project) throw new AppError("NOT_FOUND");
-  if (!ai) throw new AppError("ANALYSIS_UNAVAILABLE", "Analysis unavailable: no model is configured on this deployment. Enter items manually.");
 
   const requestHash = sha256Hex(JSON.stringify({ baseline: project.baselineItems, requestText }));
   const runId = await repo.beginAnalysisRun(project.id, requestHash);
 
+  const engine = ai ?? { create: rulesCreateMessage(project.baselineItems, requestText), modelId: RULES_MODEL_ID };
   const outcome = await extractScopeChanges({
-    create: ai.create,
-    modelId: ai.modelId,
+    create: engine.create,
+    modelId: engine.modelId,
     baseline: project.baselineItems,
     requestText,
-    deadlineMs: ai.deadlineMs,
+    deadlineMs: ai?.deadlineMs,
   });
 
   await repo.completeAnalysisRun({

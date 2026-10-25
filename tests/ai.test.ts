@@ -1,12 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { extractScopeChanges, SYSTEM_PROMPT, type CreateMessage } from "@/lib/ai/extract";
+import { analyseByRules, RULES_MODEL_ID } from "@/lib/ai/rules-model";
 import { TOOL_NAME, validateExtraction } from "@/lib/ai/schema";
 import { analyseRequest } from "@/lib/services/analyse";
 import { startDemo } from "@/lib/services/workspace";
-import { createTestDb, type TestDb } from "./helpers/db";
+import { createTestDb, pgliteRpc, type TestDb } from "./helpers/db";
 import { NORTHLIGHT_REQUEST } from "./helpers/fixtures";
-import { pgliteOwnerRepository } from "./helpers/pglite-repo";
+import { ownerRepository } from "@/lib/db/rpc-repository";
 
 // TEST FIXTURES ONLY: fake model responses. No network call is made in this file.
 const BASELINE = [
@@ -136,6 +137,35 @@ describe("extract_scope_changes adapter", () => {
   });
 });
 
+describe("built-in rules extractor", () => {
+  const ids = BASELINE.map((b) => b.id);
+
+  it("flags uncertain or unmatched requests for judgment", () => {
+    const out = analyseByRules(BASELINE, "Maybe we could also add a blog section?");
+    expect(out.items).toHaveLength(1);
+    expect(out.items[0].classification).toBe("unclear");
+    expect(out.missingInformation.length).toBeGreaterThan(0);
+    expect(validateExtraction(out, ids, "Maybe we could also add a blog section?").ok).toBe(true);
+  });
+
+  it("returns no items for a request without a concrete change", () => {
+    const out = analyseByRules(BASELINE, "Thanks!");
+    expect(out.items).toEqual([]);
+    expect(out.missingInformation).toEqual(["No concrete change was found in the request."]);
+  });
+
+  it("always produces literal quotes and real baseline IDs", () => {
+    for (const text of [
+      "Could you add a contact page, plus extend the revisions to two rounds; and move the launch date.",
+      "We'd like you to build a new pricing page.\nAlso please confirm whether B2 covers copy edits?",
+      "  Add   three   more   landing pages  and   another feedback round  ",
+      "Please make the website responsive on tablets as well as phones, and deliver it a week earlier.",
+    ]) {
+      expect(validateExtraction(analyseByRules(BASELINE, text), ids, text).ok, text).toBe(true);
+    }
+  });
+});
+
 describe("analyse service: limits, provenance and failures", () => {
   let db: TestDb;
   beforeEach(async () => {
@@ -143,30 +173,30 @@ describe("analyse service: limits, provenance and failures", () => {
   });
 
   it("stores a successful run with the actual model and usage, and flags judgment", async () => {
-    const repo = pgliteOwnerRepository(db, await db.newVisitor());
+    const repo = ownerRepository(pgliteRpc(db), await db.newVisitor());
     const projectId = await startDemo(repo);
     const unclear = { items: [{ ...GOOD.items[0], classification: "unclear" }], missingInformation: ["Which services?"] };
     const res = await analyseRequest(repo, projectId, NORTHLIGHT_REQUEST, { create: sequence(message(unclear)), modelId: "claude-haiku-5-5" });
     expect(res).toMatchObject({ needsJudgment: true, modelId: "claude-haiku-5-5", missingInformation: ["Which services?"] });
-    const [row] = await db.asUser<Record<string, unknown>>(repo.userId, "select status, model_id, token_usage, attempts, validated_result from public.analysis_runs");
+    const [row] = await db.admin<Record<string, unknown>>("select status, model_id, token_usage, attempts, validated_result from public.analysis_runs");
     expect(row).toMatchObject({ status: "success", model_id: "claude-haiku-5-5", token_usage: { input_tokens: 420, output_tokens: 160 }, attempts: 1 });
     expect(JSON.stringify(row.validated_result)).not.toMatch(/thinking|reasoning/);
   });
 
   it("returns 503 on invalid output, records the failure and stores no items", async () => {
-    const repo = pgliteOwnerRepository(db, await db.newVisitor());
+    const repo = ownerRepository(pgliteRpc(db), await db.newVisitor());
     const projectId = await startDemo(repo);
     const bad = { ...GOOD, items: [{ ...GOOD.items[0], sourceQuote: "fabricated" }] };
     await expect(
       analyseRequest(repo, projectId, NORTHLIGHT_REQUEST, { create: sequence(message(bad), message(bad)), modelId: "claude-haiku-5-5" }),
     ).rejects.toMatchObject({ code: "ANALYSIS_UNAVAILABLE", status: 503 });
-    const [row] = await db.asUser<Record<string, unknown>>(repo.userId, "select status, failure_code, validated_result, attempts from public.analysis_runs");
+    const [row] = await db.admin<Record<string, unknown>>("select status, failure_code, validated_result, attempts from public.analysis_runs");
     expect(row).toEqual({ status: "failure", failure_code: "INVALID_OUTPUT", validated_result: null, attempts: 2 });
-    expect(await db.asUser(repo.userId, "select id from public.change_versions")).toHaveLength(0);
+    expect(await db.admin("select id from public.change_versions")).toHaveLength(0);
   });
 
   it("enforces 3 per minute from the database before calling the model", async () => {
-    const repo = pgliteOwnerRepository(db, await db.newVisitor());
+    const repo = ownerRepository(pgliteRpc(db), await db.newVisitor());
     const projectId = await startDemo(repo);
     const create = vi.fn<CreateMessage>(async () => message(GOOD));
     for (let i = 0; i < 3; i++) await analyseRequest(repo, projectId, NORTHLIGHT_REQUEST, { create, modelId: "claude-haiku-5-5" });
@@ -177,16 +207,22 @@ describe("analyse service: limits, provenance and failures", () => {
     expect(create).toHaveBeenCalledTimes(3);
   });
 
-  it("returns 503 without a model call or run when no model is configured", async () => {
-    const repo = pgliteOwnerRepository(db, await db.newVisitor());
+  it("uses the built-in extractor when no hosted model is configured, through the same validation", async () => {
+    const repo = ownerRepository(pgliteRpc(db), await db.newVisitor());
     const projectId = await startDemo(repo);
-    await expect(analyseRequest(repo, projectId, NORTHLIGHT_REQUEST, null)).rejects.toMatchObject({ status: 503 });
-    expect(await db.asUser(repo.userId, "select id from public.analysis_runs")).toHaveLength(0);
+    const res = await analyseRequest(repo, projectId, NORTHLIGHT_REQUEST, null);
+    expect(res.items.map((i) => [i.sourceQuote, i.baselineItemIds, i.classification])).toEqual([
+      ["add two service pages", ["B1"], "potential_addition"],
+      ["a second round of revisions", ["B2"], "potential_addition"],
+    ]);
+    expect(res).toMatchObject({ needsJudgment: false, modelId: RULES_MODEL_ID, missingInformation: [] });
+    const [row] = await db.admin<Record<string, unknown>>("select status, model_id, attempts from public.analysis_runs");
+    expect(row).toEqual({ status: "success", model_id: RULES_MODEL_ID, attempts: 1 });
   });
 
   it("does not let visitor B analyse visitor A's project", async () => {
-    const a = pgliteOwnerRepository(db, await db.newVisitor());
-    const b = pgliteOwnerRepository(db, await db.newVisitor());
+    const a = ownerRepository(pgliteRpc(db), await db.newVisitor());
+    const b = ownerRepository(pgliteRpc(db), await db.newVisitor());
     const projectA = await startDemo(a);
     const create = vi.fn<CreateMessage>(async () => message(GOOD));
     await expect(analyseRequest(b, projectA, NORTHLIGHT_REQUEST, { create, modelId: "m" })).rejects.toMatchObject({ code: "NOT_FOUND" });

@@ -398,7 +398,7 @@ export function ChangeEditor({ project, currentVersionId, nextVersionNumber, sou
                 <div className="btn-row" style={{ gap: 8 }}>
                   <span className="mono small">#{idx + 1}</span>
                   {item.origin === "ai_suggested" ? (
-                    <span className="chip chip-ai">AI suggested</span>
+                    <span className="chip chip-ai">Suggested from request</span>
                   ) : (
                     <span className="chip chip-manual">Manually entered</span>
                   )}

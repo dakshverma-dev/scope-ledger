@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestDb, type TestDb } from "./helpers/db";
+import { createTestDb, pgliteRpc, type TestDb } from "./helpers/db";
 import { NORTHLIGHT_PUBLISH } from "./helpers/fixtures";
-import { pgliteOwnerRepository, pgliteReviewRepository } from "./helpers/pglite-repo";
+import { ownerRepository, reviewRepository } from "@/lib/db/rpc-repository";
 import { current, ORIGIN, params, post } from "./helpers/routes";
 
 vi.mock("@/lib/auth/session", async () => {
@@ -11,7 +11,7 @@ vi.mock("@/lib/auth/session", async () => {
     if (!current.owner) throw new AppError("UNAUTHENTICATED");
     return current.owner;
   };
-  return { requireOwnerRepository: need, ensureAnonymousVisitor: need, getOwnerRepository: async () => current.owner };
+  return { requireOwnerRepository: need, ensureVisitor: need, getOwnerRepository: async () => current.owner };
 });
 
 const { POST: publish } = await import("@/app/api/projects/[id]/publish/route");
@@ -23,7 +23,7 @@ let projectId: string;
 beforeEach(async () => {
   process.env.APP_BASE_URL = ORIGIN;
   db = await createTestDb();
-  current.owner = pgliteOwnerRepository(db, await db.newVisitor());
+  current.owner = ownerRepository(pgliteRpc(db), await db.newVisitor());
   projectId = await startDemo(current.owner);
 });
 
@@ -54,7 +54,7 @@ describe("POST /api/projects/[id]/publish", () => {
     expect(second).toMatchObject({ versionId: first.versionId, versionNumber: 1, extraFeePence: 13500, created: false });
     expect(second.reviewUrl).not.toBe(first.reviewUrl);
     expect(await versions()).toHaveLength(1);
-    const review = pgliteReviewRepository(db);
+    const review = reviewRepository(pgliteRpc(db));
     expect(await review.getSnapshot(hashToken(tokenOf(first.reviewUrl)))).toBeNull();
     expect(await review.getSnapshot(hashToken(tokenOf(second.reviewUrl)))).toMatchObject({ extraFeePence: 13500 });
   });
@@ -105,7 +105,7 @@ describe("POST /api/projects/[id]/publish", () => {
     expect(anon.status).toBe(401);
     expect(await anon.json()).toEqual({ error: { code: "UNAUTHENTICATED", message: expect.any(String) } });
 
-    current.owner = pgliteOwnerRepository(db, await db.newVisitor());
+    current.owner = ownerRepository(pgliteRpc(db), await db.newVisitor());
     expect((await call(NORTHLIGHT_PUBLISH())).status).toBe(404);
     expect((await call(NORTHLIGHT_PUBLISH(), "not-a-uuid")).status).toBe(404);
 

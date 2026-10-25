@@ -26,8 +26,11 @@ export async function getProjectOverview(repo: OwnerRepository, projectId: strin
   if (!uuidSchema.safeParse(projectId).success) throw new AppError("NOT_FOUND");
   const project = await repo.getProject(projectId);
   if (!project) throw new AppError("NOT_FOUND");
-  const [versions, activeLink] = await Promise.all([repo.listVersions(project.id), repo.getActiveLink(project.id)]);
-  const decisions = await repo.listDecisions(versions.map((v) => v.id));
+  const [versions, activeLink, decisions] = await Promise.all([
+    repo.listVersions(project.id),
+    repo.getActiveLink(project.id),
+    repo.listDecisions(project.id),
+  ]);
   const byVersion = new Map(decisions.map((d) => [d.changeVersionId, d]));
   const withStatus = versions.map((version) => {
     const decision = byVersion.get(version.id) ?? null;
@@ -53,13 +56,11 @@ export async function getVersionDetail(repo: OwnerRepository, versionId: string)
   if (!version) throw new AppError("NOT_FOUND");
   const project = await repo.getProject(version.projectId);
   if (!project) throw new AppError("NOT_FOUND");
-  const [[decision], activeLink] = await Promise.all([
-    repo.listDecisions([version.id]),
-    repo.getActiveLink(project.id),
-  ]);
+  const [decisions, activeLink] = await Promise.all([repo.listDecisions(project.id), repo.getActiveLink(project.id)]);
+  const decision = decisions.find((d) => d.changeVersionId === version.id) ?? null;
   return {
     project,
-    entry: { version, decision: decision ?? null, status: versionStatus(version, decision ?? null, project) },
+    entry: { version, decision, status: versionStatus(version, decision, project) },
     activeLink: activeLink && activeLink.changeVersionId === version.id ? activeLink : null,
   };
 }

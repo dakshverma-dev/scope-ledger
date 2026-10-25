@@ -1,5 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import type { Rpc } from "@/lib/db/rpc-repository";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -9,7 +10,7 @@ export type Role = "anon" | "authenticated" | "service_role";
 
 export interface TestDb {
   pg: PGlite;
-  /** Creates an auth.users row, as Supabase does for each anonymous sign-in. */
+  /** Registers a visitor workspace (as the cookie flow does) and returns its ID. */
   newVisitor(): Promise<string>;
   /** Runs one statement in its own transaction as `role`, with JWT claims for `uid`. */
   run<T = Record<string, unknown>>(role: Role, uid: string | null, sql: string, params?: unknown[]): Promise<T[]>;
@@ -47,9 +48,9 @@ export async function createTestDb(): Promise<TestDb> {
   return {
     pg,
     async newVisitor() {
-      const id = randomUUID();
-      await pg.query("insert into auth.users (id) values ($1)", [id]);
-      return id;
+      const hash = randomBytes(32).toString("hex");
+      const res = await run<{ id: string }>("service_role", null, "select public.resolve_visitor($1, true) as id", [hash]);
+      return res[0].id;
     },
     run,
     asUser: (uid, sql, params) => run("authenticated", uid, sql, params),
@@ -62,4 +63,23 @@ export async function createTestDb(): Promise<TestDb> {
 export async function sha256Hex(value: string): Promise<string> {
   const { createHash } = await import("node:crypto");
   return createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * TEST FIXTURE. Executes a routine exactly as PostgREST's RPC does: named
+ * arguments, as the given role (service_role, like the server). Lets tests run
+ * the production repository in src/lib/db/rpc-repository.ts unchanged.
+ */
+export function pgliteRpc(db: TestDb, role: Role = "service_role"): Rpc {
+  return async (fn, args) => {
+    if (!/^[a-z_]+$/.test(fn)) throw new Error("bad routine name");
+    const keys = Object.keys(args);
+    const sql = `select public.${fn}(${keys.map((k, i) => `${k} => $${i + 1}`).join(", ")}) as v`;
+    const values = keys.map((k) => {
+      const v = args[k];
+      return v !== null && typeof v === "object" ? JSON.stringify(v) : v;
+    });
+    const rows = await db.run<{ v: unknown }>(role, null, sql, values);
+    return rows[0].v;
+  };
 }

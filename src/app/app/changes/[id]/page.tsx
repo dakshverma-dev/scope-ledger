@@ -68,7 +68,7 @@ export default async function ChangePage({
                       <span className="tag" key={b}>{b}</span>
                     ))}
                     {item.origin === "ai_suggested" ? (
-                      <span className="chip chip-ai">AI suggested</span>
+                      <span className="chip chip-ai">Suggested from request</span>
                     ) : (
                       <span className="chip chip-manual">Manually entered</span>
                     )}

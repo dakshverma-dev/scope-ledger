@@ -62,7 +62,7 @@ export function renderExportHtml(r: ExportRecord): string {
   const items = v.approvedItems
     .map(
       (i, n) =>
-        `<tr><td class="id">${n + 1}</td><td>${e(i.description)}${i.sourceQuote ? `<div class="q">“${e(i.sourceQuote)}”</div>` : ""}</td><td>${e(i.baselineItemIds.join(", ") || "—")}</td><td>${i.origin === "ai_suggested" ? "AI suggested, consultant approved" : "Manually entered"}</td></tr>`,
+        `<tr><td class="id">${n + 1}</td><td>${e(i.description)}${i.sourceQuote ? `<div class="q">“${e(i.sourceQuote)}”</div>` : ""}</td><td>${e(i.baselineItemIds.join(", ") || "—")}</td><td>${i.origin === "ai_suggested" ? "Suggested from the request, consultant approved" : "Manually entered"}</td></tr>`,
     )
     .join("");
   const decision = r.decision

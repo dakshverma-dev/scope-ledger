@@ -5,8 +5,8 @@ import { assertSameOrigin } from "@/lib/http/origin";
 import { AppError } from "@/lib/http/errors";
 import { publishChange } from "@/lib/services/publish";
 import { getProjectOverview, getVersionDetail, startDemo } from "@/lib/services/workspace";
-import { createTestDb, type TestDb } from "./helpers/db";
-import { pgliteOwnerRepository } from "./helpers/pglite-repo";
+import { createTestDb, pgliteRpc, type TestDb } from "./helpers/db";
+import { ownerRepository } from "@/lib/db/rpc-repository";
 import { NORTHLIGHT_PUBLISH } from "./helpers/fixtures";
 
 let db: TestDb;
@@ -14,7 +14,7 @@ beforeEach(async () => {
   db = await createTestDb();
 });
 
-const visitor = async () => pgliteOwnerRepository(db, await db.newVisitor());
+const visitor = async () => ownerRepository(pgliteRpc(db), await db.newVisitor());
 
 describe("visitor isolation through the repository used by routes", () => {
   it("visitor B gets NOT_FOUND for every one of visitor A's records", async () => {
@@ -27,7 +27,7 @@ describe("visitor isolation through the repository used by routes", () => {
     expect((await b.listProjects()).map((p) => p.id)).not.toContain(projectA);
     expect(await b.getProject(projectA)).toBeNull();
     expect(await b.getVersion(v1.versionId)).toBeNull();
-    expect(await b.listDecisions([v1.versionId])).toEqual([]);
+    expect(await b.listDecisions(projectA)).toEqual([]);
     expect(await b.getActiveLink(projectA)).toBeNull();
     await expect(getProjectOverview(b, projectA)).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
     await expect(getVersionDetail(b, v1.versionId)).rejects.toMatchObject({ code: "NOT_FOUND" });

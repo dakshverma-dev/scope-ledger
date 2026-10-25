@@ -36,7 +36,7 @@ export default async function WorkspacePage() {
   return (
     <div className="page stack-lg">
       <div className="stack">
-        <p className="eyebrow">Anonymous workspace · this browser only</p>
+        <p className="eyebrow">Private workspace · this browser only</p>
         <h1>Your projects</h1>
       </div>
 

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-/** Creates or resumes the visitor's anonymous workspace, then opens the Northlight project. */
+/** Creates or resumes this browser's workspace, then opens the Northlight project. */
 export function StartDemoButton({ label = "Try the demo" }: { label?: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);

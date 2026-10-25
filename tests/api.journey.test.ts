@@ -1,9 +1,8 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createTestDb, type TestDb } from "./helpers/db";
+import { createTestDb, pgliteRpc, type TestDb } from "./helpers/db";
 import { NORTHLIGHT_REQUEST } from "./helpers/fixtures";
-import { pgliteOwnerRepository, pgliteReviewRepository } from "./helpers/pglite-repo";
+import { ownerRepository, reviewRepository } from "@/lib/db/rpc-repository";
 import { current, get, ORIGIN, params, post } from "./helpers/routes";
 
 vi.mock("@/lib/auth/session", async () => {
@@ -13,41 +12,12 @@ vi.mock("@/lib/auth/session", async () => {
     if (!current.owner) throw new AppError("UNAUTHENTICATED");
     return current.owner;
   };
-  return { requireOwnerRepository: need, ensureAnonymousVisitor: need, getOwnerRepository: async () => current.owner };
+  return { requireOwnerRepository: need, ensureVisitor: need, getOwnerRepository: async () => current.owner };
 });
 vi.mock("@/lib/db/admin", async () => {
   const { current } = await import("./helpers/routes");
   return { reviewRepository: () => current.review };
 });
-// TEST FIXTURE: the model call is replaced by a canned, valid extract_scope_changes reply.
-vi.mock("@/lib/ai/extract", async (orig) => {
-  const real = await orig<typeof import("@/lib/ai/extract")>();
-  const reply = {
-    id: "msg_fixture",
-    type: "message",
-    role: "assistant",
-    model: "claude-haiku-5-5",
-    stop_reason: "tool_use",
-    stop_sequence: null,
-    usage: { input_tokens: 400, output_tokens: 150 },
-    content: [
-      {
-        type: "tool_use",
-        id: "toolu_fixture",
-        name: "extract_scope_changes",
-        input: {
-          items: [
-            { requestedChange: "Add two service pages", sourceQuote: "add two service pages", baselineItemIds: ["B1"], classification: "potential_addition", reason: "B1 is three pages." },
-            { requestedChange: "Second revision round", sourceQuote: "a second round of revisions", baselineItemIds: ["B2"], classification: "potential_addition", reason: "B2 is one round." },
-          ],
-          missingInformation: [],
-        },
-      },
-    ],
-  } as unknown as Anthropic.Message;
-  return { ...real, anthropicCreateMessage: () => async () => reply };
-});
-
 const { POST: demo } = await import("@/app/api/demo/route");
 const { POST: analyse } = await import("@/app/api/projects/[id]/analyse/route");
 const { POST: publish } = await import("@/app/api/projects/[id]/publish/route");
@@ -58,11 +28,10 @@ const { GET: exportRecord } = await import("@/app/api/changes/[id]/export/route"
 let db: TestDb;
 beforeEach(async () => {
   process.env.APP_BASE_URL = ORIGIN;
-  process.env.ANTHROPIC_API_KEY = "test-fixture-key";
-  process.env.MODEL_ID = "claude-haiku-5-5";
+  delete process.env.ANTHROPIC_API_KEY;
   db = await createTestDb();
-  current.owner = pgliteOwnerRepository(db, await db.newVisitor());
-  current.review = pgliteReviewRepository(db);
+  current.owner = ownerRepository(pgliteRpc(db), await db.newVisitor());
+  current.review = reviewRepository(pgliteRpc(db));
 });
 
 const exp = (id: string, format: string) => exportRecord(get(`/api/changes/${id}/export?format=${format}`), params({ id }));
@@ -79,7 +48,8 @@ describe("Northlight demo journey through the real route handlers", () => {
     expect(a.status).toBe(200);
     const analysis = await a.json();
     expect(analysis.items.map((i: { sourceQuote: string }) => i.sourceQuote)).toEqual(["add two service pages", "a second round of revisions"]);
-    expect(analysis.modelId).toBe("claude-haiku-5-5");
+    expect(analysis.modelId).toBe("scope-ledger-rules-1");
+    expect(analysis.items.map((i: { baselineItemIds: string[] }) => i.baselineItemIds)).toEqual([["B1"], ["B2"]]);
 
     // 3. Consultant edits one description, approves both, 90 minutes, 2026-11-11.
     const approvedItems = analysis.items.map(
@@ -183,7 +153,7 @@ describe("export access and safety", () => {
 
   it("is owner-only: other visitors and signed-out callers cannot export", async () => {
     const v = await publishWith(NORTHLIGHT_REQUEST, "Two service pages");
-    current.owner = pgliteOwnerRepository(db, await db.newVisitor());
+    current.owner = ownerRepository(pgliteRpc(db), await db.newVisitor());
     const other = await exp(v.versionId, "json");
     expect(other.status).toBe(404);
     expect(await other.json()).toEqual({ error: { code: "NOT_FOUND", message: expect.any(String) } });

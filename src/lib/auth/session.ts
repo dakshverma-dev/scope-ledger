@@ -1,41 +1,32 @@
 import "server-only";
-import { createServerClient } from "@supabase/ssr";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
-import { supabaseOwnerRepository } from "@/lib/db/supabase-repository";
+import { serviceRpc } from "@/lib/db/admin";
 import type { OwnerRepository } from "@/lib/db/repository";
-import { supabaseConfig } from "@/lib/env";
+import { ownerRepository, resolveVisitor } from "@/lib/db/rpc-repository";
+import { generateReviewToken, hashToken } from "@/lib/domain/tokens";
+import { reviewTokenSchema } from "@/lib/domain/validation";
 import { AppError } from "@/lib/http/errors";
 
 /**
- * One cookie-backed Supabase client per request, using the publishable key and
- * the visitor's own session. Anonymous sign-in happens server-side, so the
- * browser bundle contains no Supabase client or key at all.
+ * Account-free workspaces: each browser gets a random 32-byte secret in an
+ * HttpOnly cookie. Only its SHA-256 is stored; the database maps it to a
+ * visitor ID that every owner routine checks.
  */
-export async function createSessionClient(): Promise<SupabaseClient> {
-  const { url, publishableKey } = supabaseConfig();
-  const store = await cookies();
-  return createServerClient(url, publishableKey, {
-    cookies: {
-      getAll: () => store.getAll(),
-      setAll(list) {
-        try {
-          for (const { name, value, options } of list) store.set(name, value, options);
-        } catch {
-          // Called from a Server Component, where cookies are read-only; proxy.ts refreshes them.
-        }
-      },
-    },
-    global: { fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }) },
-  });
+const COOKIE = "sl_visitor";
+const MAX_AGE_SECONDS = 60 * 60 * 24 * 180;
+
+async function cookieSecret(): Promise<string | null> {
+  const value = (await cookies()).get(COOKIE)?.value;
+  return value && reviewTokenSchema.safeParse(value).success ? value : null;
 }
 
-/** Verifies the session with Supabase Auth (not just the cookie) and returns the visitor. */
+/** The current browser's workspace, or null if it has none yet. */
 export async function getOwnerRepository(): Promise<OwnerRepository | null> {
-  const client = await createSessionClient();
-  const { data, error } = await client.auth.getUser();
-  if (error || !data.user) return null;
-  return supabaseOwnerRepository(client, data.user.id);
+  const secret = await cookieSecret();
+  if (!secret) return null;
+  const rpc = serviceRpc();
+  const visitorId = await resolveVisitor(rpc, hashToken(secret), false);
+  return visitorId ? ownerRepository(rpc, visitorId) : null;
 }
 
 export async function requireOwnerRepository(): Promise<OwnerRepository> {
@@ -44,14 +35,22 @@ export async function requireOwnerRepository(): Promise<OwnerRepository> {
   return repo;
 }
 
-/** Resumes the visitor's anonymous identity, or creates one (Try the demo). */
-export async function ensureAnonymousVisitor(): Promise<OwnerRepository> {
-  const existing = await getOwnerRepository();
-  if (existing) return existing;
-  const client = await createSessionClient();
-  const { data, error } = await client.auth.signInAnonymously();
-  if (error || !data.user) {
-    throw new AppError("SERVICE_NOT_CONFIGURED", "Could not start an anonymous demo session. Check that anonymous sign-ins are enabled.");
+/** Resumes this browser's workspace or creates one (Try the demo). Route handlers only. */
+export async function ensureVisitor(): Promise<OwnerRepository> {
+  const store = await cookies();
+  const rpc = serviceRpc();
+  const existing = await cookieSecret();
+  const secret = existing ?? generateReviewToken();
+  const visitorId = await resolveVisitor(rpc, hashToken(secret), true);
+  if (!visitorId) throw new AppError("INTERNAL");
+  if (!existing) {
+    store.set(COOKIE, secret, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: MAX_AGE_SECONDS,
+    });
   }
-  return supabaseOwnerRepository(client, data.user.id);
+  return ownerRepository(rpc, visitorId);
 }

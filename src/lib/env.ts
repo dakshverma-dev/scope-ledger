@@ -2,30 +2,28 @@ import "server-only";
 import { AppError } from "@/lib/http/errors";
 
 /**
- * Server-side configuration. Values are read per call so a missing optional
- * service (e.g. Anthropic) degrades one feature instead of the whole app.
- * NEXT_PUBLIC_* names are part of the required contract, but no client
- * component reads them: every Supabase call runs on the server.
+ * Server-side configuration, read per call so a missing optional service
+ * degrades one feature instead of the whole app. No client component reads
+ * any of these values.
  */
 function read(name: string): string | undefined {
   const v = process.env[name];
   return v && v.trim() ? v.trim() : undefined;
 }
 
-export function supabaseConfig(): { url: string; publishableKey: string } {
+export function supabaseConfig(): { url: string } {
   const url = read("NEXT_PUBLIC_SUPABASE_URL");
-  const publishableKey = read("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
-  if (!url || !publishableKey) throw new AppError("SERVICE_NOT_CONFIGURED", "Supabase is not configured on this deployment.");
-  return { url, publishableKey };
+  if (!url) throw new AppError("SERVICE_NOT_CONFIGURED", "Supabase is not configured on this deployment.");
+  return { url };
 }
 
 export function isSupabaseConfigured(): boolean {
-  return Boolean(read("NEXT_PUBLIC_SUPABASE_URL") && read("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"));
+  return Boolean(read("NEXT_PUBLIC_SUPABASE_URL") && read("SUPABASE_SERVICE_ROLE_KEY"));
 }
 
 export function serviceRoleKey(): string {
   const key = read("SUPABASE_SERVICE_ROLE_KEY");
-  if (!key) throw new AppError("SERVICE_NOT_CONFIGURED", "Review links are not configured on this deployment.");
+  if (!key) throw new AppError("SERVICE_NOT_CONFIGURED", "The database is not configured on this deployment.");
   return key;
 }
 
