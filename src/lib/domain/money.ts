@@ -37,7 +37,7 @@ export function formatEffort(minutes: number): string {
   return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
 
-/** "2026-11-11" -> "Wed 11 Nov 2026" (calendar date, timezone-independent) */
+/** "2026-11-11" -> "Wed, 11 Nov 2026" (calendar date, timezone-independent) */
 export function formatDate(iso: string): string {
   const d = new Date(`${iso}T00:00:00Z`);
   return new Intl.DateTimeFormat("en-GB", {

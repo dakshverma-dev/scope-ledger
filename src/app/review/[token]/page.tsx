@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { DecisionForm } from "@/components/DecisionForm";
-import { BaselineList, FeeLedger, VersionStamp, VersionStatusBadge } from "@/components/ledger";
+import { BaselineList, ConfigNotice, FeeLedger, VersionStamp, VersionStatusBadge } from "@/components/ledger";
 import { reviewRepository } from "@/lib/db/admin";
 import { formatDate, formatTimestamp } from "@/lib/domain/money";
 import type { ReviewSnapshot } from "@/lib/domain/types";
@@ -32,6 +32,13 @@ export default async function ReviewPage({ params }: { params: Promise<{ token: 
     snap = await getReview(reviewRepository(), token);
   } catch (err) {
     if (err instanceof AppError && err.code === "UNAVAILABLE") return <Unavailable />;
+    if (err instanceof AppError && err.code === "SERVICE_NOT_CONFIGURED") {
+      return (
+        <div className="page page-narrow">
+          <ConfigNotice what="Client review" />
+        </div>
+      );
+    }
     throw err;
   }
 

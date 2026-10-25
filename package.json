@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:live": "node --env-file=.env.local ./node_modules/vitest/vitest.mjs run tests/live",
+    "check:bundle": "node scripts/check-bundle.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "1.3.0",
